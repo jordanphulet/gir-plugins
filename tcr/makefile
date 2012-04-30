@@ -2,8 +2,11 @@ GIR_INC_DIR := ${GIR_SRC}/src
 GIR_LIB_DIR := ${GIR_SRC}/lib
 #GIR_PLUGINS_DIR := ../../main/plugins
 
-CUDA_LIB_DIR=/opt/NVIDIA_CUDA_SDK/cuda/lib
-CUDA_INC_DIR=/opt/NVIDIA_CUDA_SDK/cuda/include
+#CUDA_LIB_DIR=/opt/NVIDIA_CUDA_SDK/cuda/lib
+#CUDA_INC_DIR=/opt/NVIDIA_CUDA_SDK/cuda/include
+
+CUDA_LIB_DIR=/usr/local/cuda/lib64
+CUDA_INC_DIR=/usr/local/cuda/include
 
 # fftw_flags
 FFTW_PATH := /home/mirl/jhulet/opt/fftw3
@@ -11,8 +14,8 @@ FFTW_LIB := -L${FFTW_PATH}/lib -lfftw3f
 
 CXX_ARGS := -I./ -I${GIR_INC_DIR}
 
-Plugin_TCR.so: Plugin_TCR.cpp TCRIterator.o TCRIteratorCPU.o KernelCode_CPU.o
-	${CXX} ${CXX_ARGS} -DNO_CUDA -L${GIR_LIB_DIR} -I${CUDA_INC_DIR} TCRIterator.o TCRIteratorCPU.o KernelCode_CPU.o -lgir-base -shared -fPIC -o $@ $<
+Plugin_TCR.so: Plugin_TCR.cpp TCRIterator.o TCRIteratorCUDA.o TCRIteratorCPU.o KernelCode_CUDA.o KernelCode_CPU.o
+	${CXX} ${CXX_ARGS} -L${GIR_LIB_DIR} -I${CUDA_INC_DIR} -L${CUDA_LIB_DIR} TCRIterator.o TCRIteratorCPU.o TCRIteratorCUDA.o KernelCode_CUDA.o KernelCode_CPU.o -lgir-base -lcudart -lcufft -shared -fPIC -o $@ $<
 	#cp $@ ${GIR_PLUGINS_DIR}
 
 %.o: %.cpp
