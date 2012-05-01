@@ -1,0 +1,5 @@
+.exrc
+*.linkinfo
+*.o
+*.so
+atomic-tcr
