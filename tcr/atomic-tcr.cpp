@@ -17,10 +17,10 @@
 	#include <TCRIteratorCUDA.h>
 #endif
 
-bool Reconstruct( MRIData& data, float alpha, float beta, float beta_squared, float step_size, int iterations, bool use_gpu, int cpu_threads )
+bool Reconstruct( MRIData& data, float alpha, float beta, float beta_squared, float step_size, int iterations, bool use_gpu, int cuda_device, int cpu_threads )
 {
 	GIRLogger::LogInfo( "reconstructing (%s)...\n", data.Size().ToString().c_str() );
-	int gpu_thread_load = 2;
+	int gpu_thread_load = 1;
 	
 	// regrid
 	{
@@ -51,6 +51,7 @@ bool Reconstruct( MRIData& data, float alpha, float beta, float beta_squared, fl
 #ifndef NO_CUDA
 		GIRLogger::LogInfo( "reconstructing on GPU...\n" );
 		TCRIteratorCUDA iterator( gpu_thread_load, TCRIterator::TEMP_DIM_REP );
+		iterator.cuda_device = cuda_device;
 		iterator.Load( alpha, beta, beta_squared, step_size, data, estimate );
 		iterator.Iterate( iterations );
 		iterator.Unload( data );
@@ -74,14 +75,14 @@ bool Reconstruct( MRIData& data, float alpha, float beta, float beta_squared, fl
 }
 
 
-void Execute( const char* input_file, float alpha, float beta, float beta_squared, float step_size, int iterations, bool use_gpu, int cpu_threads )
+void Execute( const char* input_file, const char* output_file, float alpha, float beta, float beta_squared, float step_size, int iterations, bool use_gpu, int cuda_device, int cpu_threads )
 {
-	printf( "parameters:\n\talpha %f, beta %f, step_size %f, iterations %d, use_gpu %d\n", alpha, beta, step_size, iterations, use_gpu );
+	printf( "parameters:\n\talpha %f, beta %f, step_size %f, iterations %d, use_gpu %d, cuda_device: %d, cpu_threads: %d\n", alpha, beta, step_size, iterations, use_gpu, cuda_device, cpu_threads );
 		
 	// open file communicator
 	printf( "opening %s...\n", input_file );
 	FileCommunicator communicator;
-	if( !communicator.OpenInput( input_file ) || !communicator.OpenOutput( "tcr_data.out" ) )
+	if( !communicator.OpenInput( input_file ) || !communicator.OpenOutput( output_file ) )
 	{
 		GIRLogger::LogError( "Unable to open IO files!\n" );
 		exit( EXIT_FAILURE );
@@ -97,7 +98,7 @@ void Execute( const char* input_file, float alpha, float beta, float beta_square
 	communicator.ReceiveData( data );
 
 	// reconstruct
-	Reconstruct( data, alpha, beta, beta_squared, step_size, iterations, use_gpu, cpu_threads );
+	Reconstruct( data, alpha, beta, beta_squared, step_size, iterations, use_gpu, cuda_device, cpu_threads );
 
 	// write output
 	GIRLogger::LogInfo( "Writing output...\n" );
@@ -108,9 +109,9 @@ void Execute( const char* input_file, float alpha, float beta, float beta_square
 int main( int argc, char** argv )
 {
 	// check args
-	if( argc != 9 )
+	if( argc != 11 )
 	{
-		fprintf( stderr, "USAGE: atomic-tcr INPUT_FILE ALPHA BETA BETA_SQUARED STEP_SIZE ITERATIONS USE_GPU CPU_THREADS\n" );
+		fprintf( stderr, "USAGE: atomic-tcr INPUT_FILE OUTPUT_FILE ALPHA BETA BETA_SQUARED STEP_SIZE ITERATIONS USE_GPU CUDA_DEVICE CPU_THREADS\n" );
 		exit( EXIT_FAILURE );
 	}
 
@@ -122,14 +123,15 @@ int main( int argc, char** argv )
 	double step_size;
 	int iterations;
 	int use_gpu;
+	int cuda_device;
 	int cpu_threads;
 	std::stringstream str;
-	str << argv[2]  << " " << argv[3] << " " << argv[4] << " " << argv[5] << " " << argv[6] << " " << argv[7] << " " << argv[8];
-	str >> alpha >> beta >> beta_squared >> step_size >> iterations >> use_gpu >> cpu_threads;
+	str << " " << argv[3] << " " << argv[4] << " " << argv[5] << " " << argv[6] << " " << argv[7] << " " << argv[8] << " " << argv[9] << " " << argv[10];
+	str >> alpha >> beta >> beta_squared >> step_size >> iterations >> use_gpu >> cuda_device >> cpu_threads;
 	
 	// execute
 	GIRLogger::LogInfo( "starting...\n" );
-	Execute( argv[1], alpha, beta, beta_squared, step_size, iterations, use_gpu, cpu_threads );
+	Execute( argv[1], argv[2], alpha, beta, beta_squared, step_size, iterations, use_gpu, cuda_device, cpu_threads );
 
 	exit( EXIT_SUCCESS );
 }

@@ -9,7 +9,7 @@
 #include <cmath>
 #include <cuda.h>
 
-#define CUDA_THREADS_PER_BLOCK 512 
+#define CUDA_THREADS_PER_BLOCK 1024
 
 TCRIteratorCUDA::TCRIteratorCUDA( int new_thread_load, TemporalDimension new_temp_dim ): 
 	h_meas_data(0),

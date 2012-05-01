@@ -17,11 +17,11 @@ class MachineDesc
 {
 	public:
 	string address;
-	int gpu_num;
+	int cuda_device;
 
-	MachineDesc( string new_address, int new_gpu_num ):
+	MachineDesc( string new_address, int new_cuda_device ):
 		address( new_address ),
-		gpu_num( new_gpu_num )
+		cuda_device( new_cuda_device )
 	{
 	}
 };
@@ -36,6 +36,8 @@ class ReconConfig
 	float iterations;
 	bool use_gpu;
 	int cpu_threads;
+	string host_io_dir;
+	string node_io_dir;
 	string input_file;
 	string output_file;
 	vector<MachineDesc> machine_descs;
@@ -48,6 +50,8 @@ class ReconConfig
 		iterations( 100 ),
 		use_gpu( false ),
 		cpu_threads( 1 ),
+		host_io_dir( "/DATA" ),
+		node_io_dir( "/DATA" ),
 		input_file( "input.ser" ),
 		output_file( "output.ser" )
 	{
@@ -85,6 +89,10 @@ class ReconConfig
 				line_stream >> use_gpu;
 			else if( key.compare( "cpu_threads" ) == 0 )
 				line_stream >> cpu_threads;
+			else if( key.compare( "host_io_dir" ) == 0 )
+				line_stream >> host_io_dir;
+			else if( key.compare( "node_io_dir" ) == 0 )
+				line_stream >> node_io_dir;
 			else if( key.compare( "input_file" ) == 0 )
 				line_stream >> input_file;
 			else if( key.compare( "output_file" ) == 0 )
@@ -93,9 +101,9 @@ class ReconConfig
 			else if( key.compare( "machine" ) == 0 )
 			{
 				string address;
-				int gpu_num;
-				line_stream >> address >> gpu_num;
-				MachineDesc machine_desc( address, gpu_num );
+				int cuda_device;
+				line_stream >> address >> cuda_device;
+				MachineDesc machine_desc( address, cuda_device );
 				machine_descs.push_back( machine_desc );
 			}
 			else if( key.compare( "" ) != 0 )
@@ -114,16 +122,56 @@ class ReconConfig
 		cout << "iterations: " << iterations << endl;
 		cout << "use_gpu: " << use_gpu << endl;
 		cout << "cpu_threads: " << cpu_threads << endl;
+		cout << "host_io_dir: " << host_io_dir << endl;
+		cout << "node_io_dir: " << node_io_dir << endl;
 		cout << "input_file: " << input_file << endl;
 		cout << "output_file: " << output_file << endl;
 		cout << "machines:\t" << endl;
 		for( int i = 0; i < machine_descs.size(); i++ )
-			cout << "\t" << machine_descs[i].address << ", GPU: " << machine_descs[i].gpu_num << endl;
+			cout << "\t" << machine_descs[i].address << ", GPU: " << machine_descs[i].cuda_device << endl;
 	}
 };
 
+bool GetDataSubset( MRIData& data_in, MRIData& data_out, int channel, int slice )
+{
+	if( data_in.Size().Channel <= channel || data_in.Size().Slice <= slice )
+	{
+		cerr << "GetDataSubset -> invalid channel or slice!" << endl;
+		return false;
+	}
+
+	// resize data_out
+	MRIDimensions sub_dims = data_in.Size();
+	sub_dims.Channel = 1;
+	sub_dims.Slice = 1;
+	data_out = MRIData( sub_dims, data_in.IsComplex() );
+
+	// copy data
+	int copy_size = data_in.Size().Column * sizeof( float );
+	if( data_in.IsComplex() )
+		copy_size *= 2;
+
+	for( int line = 0;	line < sub_dims.Line; line++ )
+	for( int set = 0; set < sub_dims.Set; set++ )
+	for( int phase = 0; phase < sub_dims.Phase; phase++ )
+	for( int echo = 0; echo < sub_dims.Echo; echo++ )
+	for( int repetition = 0; repetition < sub_dims.Repetition; repetition++ )
+	for( int segment = 0; segment < sub_dims.Segment; segment++ )
+	for( int partition = 0; partition < sub_dims.Partition; partition++ )
+	for( int average = 0; average < sub_dims.Average; average++ )
+	{
+		float* full_index = data_in.GetDataIndex( 0, line, channel, set, phase, slice, echo, repetition, segment, partition, average );
+		float* sub_index = data_out.GetDataIndex( 0, line, 0, set, phase, 0, echo, repetition, segment, partition, average );
+		memcpy( full_index, sub_index, copy_size );
+	}
+
+	return true;
+}
+
 int main( int argc, char** argv )
 {
+	time_t time_begin = time( 0 );
+
 	// check args
 	if( argc != 2 )
 	{
@@ -141,10 +189,11 @@ int main( int argc, char** argv )
 	config.Print();
 	
 	// load the data
+	string full_input_path = config.host_io_dir + config.input_file;
 	FileCommunicator communicator;
-	if( !communicator.OpenInput( config.input_file.c_str() ) )
+	if( !communicator.OpenInput( full_input_path.c_str() ) )
 	{
-		cerr << "Unable to load input file: '" << config.input_file << "!'" << endl;
+		cerr << "Unable to load input file: '" << full_input_path << "!'" << endl;
 		exit( EXIT_FAILURE );
 	}
 	MRIReconRequest request;
@@ -156,7 +205,7 @@ int main( int argc, char** argv )
 	stringstream path_prefix_stream;
 	path_prefix_stream << "aws-gpu-" << time(0);
 
-	// split the data and execute
+	// fork to execute on all machines
 	int num_machines = config.machine_descs.size();
 	int num_subsets = mri_data.Size().Channel * mri_data.Size().Slice;
 	int subsets_per_machine = (int)ceil( (float)num_subsets / num_machines );
@@ -164,6 +213,9 @@ int main( int argc, char** argv )
 	cout << "num_subsets: " << num_subsets << endl;
 	cout << "subsets_per_machine: " << subsets_per_machine << endl;
 	vector<pid_t> pids;
+
+	time_t time_init_done = time( 0 );
+
 	for( int i = 0; i < num_machines; i++ )
 	{
 		// child
@@ -177,35 +229,65 @@ int main( int argc, char** argv )
 			MachineDesc this_desc = config.machine_descs[i];
 			// get path prefix
 			path_prefix_stream << "-" << i;
-			string exec_path = "/DATA/aws-data/" + path_prefix_stream.str();
-			cout << "executing on: " << this_desc.address << ", GPU: " << this_desc.gpu_num << ", path: " << exec_path << endl;
+			string exec_path = config.node_io_dir + path_prefix_stream.str();
+			cout << "executing on: " << this_desc.address << ", GPU: " << this_desc.cuda_device << ", path: " << exec_path << endl;
+			
+			for( int subset = 0; subset < subsets_per_machine; subset++ )
+			{
+				int real_subset = subset + (i * subsets_per_machine);
+				if( real_subset >= num_subsets )
+					break;
 
-			// create tcr command
-			stringstream tcr_command_stream;
-			tcr_command_stream << "./atomic-tcr ";
-			tcr_command_stream << config.input_file << " ";
-			tcr_command_stream << config.alpha << " ";
-			tcr_command_stream << config.beta << " ";
-			tcr_command_stream << config.beta_sq << " ";
-			tcr_command_stream << config.step_size << " ";
-			tcr_command_stream << config.iterations << " ";
-			tcr_command_stream << config.use_gpu << " ";
-			tcr_command_stream << config.use_gpu << " ";
-			//cout << tcr_command_stream.str() << endl;
+				// split the data
+				int sub_channel = real_subset % mri_data.Size().Channel;
+				int sub_slice = real_subset / mri_data.Size().Channel;
+				MRIData sub_data;
+				if( !GetDataSubset( mri_data, sub_data, sub_channel, sub_slice ) )
+				{
+					cerr << "GetDataSubset failed!\n" << endl;
+					return EXIT_FAILURE;
+				}
 
+				cout << "executing subset " << real_subset << " (" << sub_channel << ", " << sub_slice << "): " << subset << endl;
 
-			// generate payload
-			stringstream payload_stream;
-			payload_stream << "ssh " << this_desc.address << " mkdir -p " << exec_path << "/;" << endl;
-			payload_stream << "scp aws-exec/* " << this_desc.address << ":" << exec_path << "/;" << endl;
-			payload_stream << "scp " <<  config.input_file << " "<< this_desc.address << ":" << exec_path << "/;" << endl;
-			payload_stream << "ssh " << this_desc.address << " \"(cd " << exec_path << "/; " << tcr_command_stream.str() << "&> atomic-tcr.out)\";" << endl;
-			cout << "payload: " << endl << "----------" << endl << payload_stream.str() << endl;
+				// write data to disk
+				stringstream sub_data_file;
+				sub_data_file << config.input_file << ".ch_" << sub_channel << ".sl_" << sub_slice;
+				string sub_data_path = config.host_io_dir + sub_data_file.str();
+				FileCommunicator out_communicator;
+				out_communicator.OpenOutput( sub_data_path.c_str() );
+				MRIReconRequest request;
+				request.pipeline = "nothing";
+				out_communicator.SendReconRequest( request );
+				out_communicator.SendData( sub_data );
+	
+				// create tcr command
+				stringstream tcr_command_stream;
+				tcr_command_stream << "./atomic-tcr ";
+				tcr_command_stream << sub_data_file.str() << " ";
+				tcr_command_stream << sub_data_file.str() + ".out" << " ";
+				tcr_command_stream << config.alpha << " ";
+				tcr_command_stream << config.beta << " ";
+				tcr_command_stream << config.beta_sq << " ";
+				tcr_command_stream << config.step_size << " ";
+				tcr_command_stream << config.iterations << " ";
+				tcr_command_stream << config.use_gpu << " ";
+				tcr_command_stream << this_desc.cuda_device << " ";
+				tcr_command_stream << config.cpu_threads << " ";
+	
+				// generate payload
+				stringstream payload_stream;
+				payload_stream << "ssh " << this_desc.address << " mkdir -p " << exec_path << "/;" << endl;
+				payload_stream << "scp aws-bins/* " << this_desc.address << ":" << exec_path << "/;" << endl;
+				payload_stream << "scp " <<  sub_data_path << " "<< this_desc.address << ":" << exec_path << "/;" << endl;
+				payload_stream << "ssh " << this_desc.address << " \"(cd " << exec_path << "/; " << tcr_command_stream.str() << "&> atomic-tcr.out)\";" << endl;
+				cout << "payload: " << endl << "----------" << endl << payload_stream.str() << endl;
+	
+				// execute payload
+				system( payload_stream.str().c_str() );
+			}
 
-			// execute payload
-			system( payload_stream.str().c_str() );
-
-			// create path
+			// forked child is done
 			return EXIT_SUCCESS;
 		}
 	}
@@ -222,7 +304,17 @@ int main( int argc, char** argv )
 		}
 	}
 
+	time_t time_all_done = time( 0 );
+
+	double init_time = time_init_done - time_begin;
+	double recon_time = time_all_done - time_init_done;
+	double total_time = time_all_done - time_begin;
+
 	// done
 	cout << "all forks done, exiting..." << endl;
+	cout << "initialzation time: " << init_time << endl;
+	cout << "reconstruction time: " << recon_time << endl;
+	cout << "total time: " << total_time << endl;
+
 	return EXIT_SUCCESS;
 }
