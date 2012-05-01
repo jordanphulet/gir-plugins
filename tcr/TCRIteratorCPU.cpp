@@ -17,10 +17,10 @@ TCRIteratorCPU::~TCRIteratorCPU()
 	if( lambda_map != 0 ) { delete [] lambda_map; lambda_map = 0; }
 }
 
-void TCRIteratorCPU::Load( float alpha, float beta, float beta_squared, float step_size, MRIData& src_meas_data, MRIData& src_estimate, MRIData& src_coil_map, MRIData& src_lambda_map )
+void TCRIteratorCPU::Load( float alpha, float beta, float beta_squared, float step_size, MRIData& src_meas_data, MRIData& src_estimate )
 {
 	// call parent
-	TCRIterator::Load( alpha, beta, beta_squared, step_size, src_meas_data, src_estimate, src_coil_map, src_lambda_map );
+	TCRIterator::Load( alpha, beta, beta_squared, step_size, src_meas_data, src_estimate );
 
 	// make sure sizes are compatible
 	if( !src_meas_data.Size().Equals( src_estimate.Size() ) )
@@ -38,16 +38,6 @@ void TCRIteratorCPU::Load( float alpha, float beta, float beta_squared, float st
 	if( estimate != 0 ) delete[] estimate;
 	estimate = new float[src_estimate.NumElements()];
 	Order( src_estimate, estimate );
-
-	// load coil_map
-	if( coil_map != 0 ) delete[] coil_map;
-	coil_map = new float[src_coil_map.NumElements()];
-	Order( src_coil_map, coil_map );
-
-	// load lambda_map
-	if( lambda_map != 0 ) delete[] lambda_map;
-	lambda_map = new float[src_lambda_map.NumElements()];
-	Order( src_lambda_map, lambda_map );
 
 	// allocate gradient
 	gradient = new float[src_estimate.NumElements()];
@@ -71,8 +61,6 @@ void TCRIteratorCPU::Load( float alpha, float beta, float beta_squared, float st
 		args[i].coil_slice_size = args[i].image_size * src_meas_data.Size().Channel;
 		args[i].data_size = src_meas_data.Size();
 		args[i].temp_dim_size = temp_dim_size;
-		args[i].coil_map = coil_map;
-		args[i].lambda_map = lambda_map;
 		args[i].meas_data = meas_data;
 		args[i].estimate = estimate;
 		args[i].gradient = gradient;
@@ -89,26 +77,6 @@ void TCRIteratorCPU::Unload( MRIData& dest_estimate )
 		GIRLogger::LogError( "TCRIteratorCPU::Unload -> estimate == 0, unload aborting!\n" );
 	else
 		Unorder( dest_estimate, estimate );
-}
-
-void TCRIteratorCPU::ApplySensitivity()
-{
-	// create threads
-	for( int i = 0; i < num_threads; i++ )
-		pthread_create( &pthreads[i], NULL, CPU_ApplySensitivity, (void*)(&args[i]) );
-	// join threads
-	for( int i = 0; i < num_threads; i++ )
-		pthread_join( pthreads[i], NULL );
-}
-
-void TCRIteratorCPU::ApplyInvSensitivity() 
-{
-	// create threads
-	for( int i = 0; i < num_threads; i++ )
-		pthread_create( &pthreads[i], NULL, CPU_ApplyInvSensitivity, (void*)(&args[i]) );
-	// join threads
-	for( int i = 0; i < num_threads; i++ )
-		pthread_join( pthreads[i], NULL );
 }
 
 void TCRIteratorCPU::FFT() 

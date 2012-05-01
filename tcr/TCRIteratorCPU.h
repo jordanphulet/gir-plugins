@@ -27,12 +27,10 @@ class TCRIteratorCPU: public TCRIterator
 
 	~TCRIteratorCPU();
 
-	virtual void Load( float alpha, float beta, float beta_squared, float step_size, MRIData& src_meas_data, MRIData& src_estimate, MRIData& src_coil_map, MRIData& src_lambda_map );
+	virtual void Load( float alpha, float beta, float beta_squared, float step_size, MRIData& src_meas_data, MRIData& src_estimate );
 	virtual void Unload( MRIData& dest_estimate );
 
 	protected:
-	virtual void ApplySensitivity();
-	virtual void ApplyInvSensitivity();
 	virtual void FFT();
 	virtual void IFFT();
 	virtual void ApplyFidelityDifference();

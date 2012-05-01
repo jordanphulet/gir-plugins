@@ -12,7 +12,7 @@ class TCRIterator
 	TCRIterator( TemporalDimension new_temp_dim ): temp_dim( new_temp_dim ) {}
 	virtual ~TCRIterator() {}
 
-	virtual void Load( float alpha, float beta, float beta_squared, float step_size, MRIData& src_meas_data, MRIData& estimate, MRIData& coil_map, MRIData& lambda_map );
+	virtual void Load( float alpha, float beta, float beta_squared, float step_size, MRIData& src_meas_data, MRIData& estimate );
 	virtual void Unload( MRIData& estimate ) = 0;
 	virtual void Iterate( int iterations );
 
@@ -23,8 +23,6 @@ class TCRIterator
 	void Order( MRIData& mri_data, float* dest );
 	void Unorder( MRIData& mri_data, float* source );
 
-	virtual void ApplySensitivity() = 0;
-	virtual void ApplyInvSensitivity() = 0;
 	virtual void FFT() = 0;
 	virtual void IFFT() = 0;
 	virtual void ApplyFidelityDifference() = 0;

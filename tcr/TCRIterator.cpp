@@ -2,7 +2,7 @@
 #include <GIRLogger.h>
 #include <MRIData.h>
 
-void TCRIterator::Load( float alpha, float beta, float beta_squared, float step_size, MRIData& src_meas_data, MRIData& estimate, MRIData& coil_map, MRIData& lambda_map )
+void TCRIterator::Load( float alpha, float beta, float beta_squared, float step_size, MRIData& src_meas_data, MRIData& estimate )
 {
 	if( temp_dim == TEMP_DIM_PHASE )
 		temp_dim_size = src_meas_data.Size().Phase;
@@ -24,12 +24,8 @@ void TCRIterator::Iterate( int iterations )
 	{
 		GIRLogger::LogInfo( "TCRIterator::Iterate -> iteration: %d...\n", i );
 
-		// fidelity sense term
-		ApplySensitivity();
-		FFT();
+		// fidelity term
 		ApplyFidelityDifference();
-		IFFT();
-		ApplyInvSensitivity();
 
 		// temporal gradient term
 		CalcTemporalGradient();

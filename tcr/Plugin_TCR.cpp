@@ -120,7 +120,7 @@ bool Plugin_TCR::Reconstruct( MRIData& mri_data )
 #ifndef NO_CUDA
 		GIRLogger::LogInfo( "Plugin_TCR::Reconstruct -> reconstructing on GPU...\n" );
 		TCRIteratorCUDA iterator( gpu_thread_load, temp_dim );
-		iterator.Load( alpha, beta, beta_squared, step_size, mri_data, estimate, coil_map, lambda_map );
+		iterator.Load( alpha, beta, beta_squared, step_size, mri_data, estimate );
 		iterator.Iterate( iterations );
 		iterator.Unload( mri_data );
 #else
@@ -132,7 +132,7 @@ bool Plugin_TCR::Reconstruct( MRIData& mri_data )
 	{
 		GIRLogger::LogInfo( "Plugin_TCR::Reconstruct -> reconstructing on CPU(s)...\n" );
 		TCRIteratorCPU iterator( threads, temp_dim );
-		iterator.Load( alpha, beta, beta_squared, step_size, mri_data, estimate, coil_map, lambda_map );
+		iterator.Load( alpha, beta, beta_squared, step_size, mri_data, estimate );
 		iterator.Iterate( iterations );
 		iterator.Unload( mri_data );
 	}

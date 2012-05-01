@@ -39,7 +39,9 @@ mpi-tcr: mpi-tcr.cpp TCRIterator.o TCRIteratorCPU.o MPITools.cpp KernelCode_CPU.
 
 serial-tcr: serial-tcr.cpp TCRIterator.o TCRIteratorCPU.o MPITools.cpp KernelCode_CPU.o KernelCode_CUDA.o MPIPartitioner.o TCRIteratorCUDA.o
 	${CXX} TCRIterator.o TCRIteratorCPU.o TCRIteratorCUDA.o KernelCode_CPU.o KernelCode_CUDA.o MPIPartitioner.o -I${CUDA_INC_DIR} ${CXX_ARGS} -L${GIR_LIB_DIR} -L${CUDA_LIB_DIR} -L${FFTW_PATH}/lib -lgir-base -lcudart -lcufft -lfftw3f -ldl -o $@ $<
-	#${CXX} TCRIterator.o TCRIteratorCPU.o TCRIteratorCUDA.o KernelCode_CPU.o KernelCode_CUDA.o MPIPartitioner.o -limf -lm -I${CUDA_INC_DIR} ${CXX_ARGS} -L${GIR_LIB_DIR} -L${CUDA_LIB_DIR} -L${FFTW_PATH}/lib -lcudart -lcufft -lgir-base -lfftw3f -ldl -o $@ $<
+
+atomic-tcr: atomic-tcr.cpp TCRIterator.o TCRIteratorCPU.o MPITools.cpp KernelCode_CPU.o KernelCode_CUDA.o MPIPartitioner.o TCRIteratorCUDA.o
+	${CXX} TCRIterator.o TCRIteratorCPU.o TCRIteratorCUDA.o KernelCode_CPU.o KernelCode_CUDA.o MPIPartitioner.o -I${CUDA_INC_DIR} ${CXX_ARGS} -L${GIR_LIB_DIR} -L${CUDA_LIB_DIR} -L${FFTW_PATH}/lib -lgir-base -lcudart -lcufft -lfftw3f -ldl -o $@ $<
 
 clean:
 	rm -f *.o
