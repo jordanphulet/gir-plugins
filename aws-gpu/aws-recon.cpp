@@ -17,10 +17,12 @@ class MachineDesc
 {
 	public:
 	string address;
+	int port;
 	int cuda_device;
 
-	MachineDesc( string new_address, int new_cuda_device ):
+	MachineDesc( string new_address, int new_port, int new_cuda_device ):
 		address( new_address ),
+		port( new_port ),
 		cuda_device( new_cuda_device )
 	{
 	}
@@ -101,9 +103,10 @@ class ReconConfig
 			else if( key.compare( "machine" ) == 0 )
 			{
 				string address;
+				int port;
 				int cuda_device;
-				line_stream >> address >> cuda_device;
-				MachineDesc machine_desc( address, cuda_device );
+				line_stream >> address >> port >> cuda_device;
+				MachineDesc machine_desc( address, port, cuda_device );
 				machine_descs.push_back( machine_desc );
 			}
 			else if( key.compare( "" ) != 0 )
@@ -128,7 +131,7 @@ class ReconConfig
 		cout << "output_file: " << output_file << endl;
 		cout << "machines:\t" << endl;
 		for( int i = 0; i < machine_descs.size(); i++ )
-			cout << "\t" << machine_descs[i].address << ", GPU: " << machine_descs[i].cuda_device << endl;
+			cout << "\t" << machine_descs[i].address << ":" << machine_descs[i].port << ", GPU: " << machine_descs[i].cuda_device << endl;
 	}
 };
 
@@ -230,7 +233,7 @@ int main( int argc, char** argv )
 			// get path prefix
 			path_prefix_stream << "-" << i;
 			string exec_path = config.node_io_dir + path_prefix_stream.str();
-			cout << "executing on: " << this_desc.address << ", GPU: " << this_desc.cuda_device << ", path: " << exec_path << endl;
+			cout << "executing on: " << this_desc.address << ":" << this_desc.port << ", GPU: " << this_desc.cuda_device << ", path: " << exec_path << endl;
 			
 			for( int subset = 0; subset < subsets_per_machine; subset++ )
 			{
@@ -277,10 +280,10 @@ int main( int argc, char** argv )
 	
 				// generate payload
 				stringstream payload_stream;
-				payload_stream << "ssh " << this_desc.address << " mkdir -p " << exec_path << "/;" << endl;
-				payload_stream << "scp aws-bins/* " << this_desc.address << ":" << exec_path << "/;" << endl;
-				payload_stream << "scp " <<  sub_data_path << " "<< this_desc.address << ":" << exec_path << "/;" << endl;
-				payload_stream << "ssh " << this_desc.address << " \"(cd " << exec_path << "/; " << tcr_command_stream.str() << "&> atomic-tcr.out)\";" << endl;
+				payload_stream << "ssh -p " << this_desc.port << " " << this_desc.address << " mkdir -p " << exec_path << "/;" << endl;
+				payload_stream << "scp -P " << this_desc.port << " aws-bins/* " << this_desc.address << ":" << exec_path << "/;" << endl;
+				payload_stream << "scp -P " << this_desc.port << " " <<  sub_data_path << " "<< this_desc.address << ":" << exec_path << "/;" << endl;
+				payload_stream << "ssh -p " << this_desc.port << " " << this_desc.address << " \"(cd " << exec_path << "/; " << tcr_command_stream.str() << "&> atomic-tcr.out)\";" << endl;
 				cout << "payload: " << endl << "----------" << endl << payload_stream.str() << endl;
 	
 				// execute payload
