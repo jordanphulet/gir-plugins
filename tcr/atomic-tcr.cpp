@@ -44,6 +44,7 @@ bool Reconstruct( MRIData& data, float alpha, float beta, float beta_squared, fl
 	GIRLogger::LogInfo( "generating original estimate...\n" );
 	MRIData estimate;
 	MRIDataTool::TemporallyInterpolateKSpace( data, estimate );
+	FilterTool::FFT2D( estimate, true );
 
 	// iterate
 	if( use_gpu )

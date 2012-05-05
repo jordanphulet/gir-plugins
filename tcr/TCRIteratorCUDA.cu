@@ -144,6 +144,13 @@ void TCRIteratorCUDA::Unload( MRIData& dest_estimate )
 	}
 }
 
+void TCRIteratorCUDA::LoadGradient()
+{
+	CUDA_LoadGradient<<< dim_grid, dim_block >>>( args.gradient, args.estimate, args.num_pixels, thread_load );
+	cudaThreadSynchronize();
+	CheckCUDAError( "LoadGradient" );
+}
+
 void TCRIteratorCUDA::FFT() 
 {
 	int total_images = args.num_pixels / args.image_size;
@@ -158,7 +165,7 @@ void TCRIteratorCUDA::IFFT()
 
 void TCRIteratorCUDA::ApplyFidelityDifference()
 {
-	CUDA_ApplyFidelityDifference<<< dim_grid, dim_block >>>( args.estimate, args.gradient, args.meas_data, args.num_pixels, thread_load );
+	CUDA_ApplyFidelityDifference<<< dim_grid, dim_block >>>( args.estimate, args.gradient, args.meas_data, args.image_size, args.num_pixels, thread_load );
 	cudaThreadSynchronize();
 	CheckCUDAError( "ApplyFidelityDifference" );
 }

@@ -23,6 +23,7 @@ class TCRIteratorCUDA: public TCRIterator
 	virtual void Unload( MRIData& dest_estimate );
 
 	protected:
+	virtual void LoadGradient();
 	virtual void FFT();
 	virtual void IFFT();
 	virtual void ApplyFidelityDifference();

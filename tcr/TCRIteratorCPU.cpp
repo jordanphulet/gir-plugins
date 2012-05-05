@@ -79,6 +79,16 @@ void TCRIteratorCPU::Unload( MRIData& dest_estimate )
 		Unorder( dest_estimate, estimate );
 }
 
+void TCRIteratorCPU::LoadGradient()
+{
+	// create threads
+	for( int i = 0; i < num_threads; i++ )
+		pthread_create( &pthreads[i], NULL, CPU_LoadGradient, (void*)(&args[i]) );
+	// join threads
+	for( int i = 0; i < num_threads; i++ )
+		pthread_join( pthreads[i], NULL );
+}
+
 void TCRIteratorCPU::FFT() 
 {
 	// create threads

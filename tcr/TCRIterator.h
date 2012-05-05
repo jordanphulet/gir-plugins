@@ -23,6 +23,7 @@ class TCRIterator
 	void Order( MRIData& mri_data, float* dest );
 	void Unorder( MRIData& mri_data, float* source );
 
+	virtual void LoadGradient() = 0;
 	virtual void FFT() = 0;
 	virtual void IFFT() = 0;
 	virtual void ApplyFidelityDifference() = 0;

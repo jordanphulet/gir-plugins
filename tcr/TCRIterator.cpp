@@ -22,15 +22,19 @@ void TCRIterator::Iterate( int iterations )
 	// perform iterations
 	for( int i = 0; i < iterations; i++ )
 	{
-		GIRLogger::LogInfo( "TCRIterator::Iterate -> iteration: %d...\n", i );
+		GIRLogger::LogInfo( "TCRIterator::Iterate -> this is iteration: %d...\n", i );
+
+		// load gradient with estimate
+		LoadGradient();
 
 		// fidelity term
+		FFT();
+		// NOTE: FFT scaling happens inside for CUDA
 		ApplyFidelityDifference();
+		IFFT();
 
 		// temporal gradient term
-		IFFT();
 		CalcTemporalGradient();
-		FFT();
 		
 		// update estimate
 		UpdateEstimate();

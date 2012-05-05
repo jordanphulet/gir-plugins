@@ -5,7 +5,6 @@
 #ifdef TCR_KERNEL_CUDA
 	#include <cufft.h>
 #else
-	void* CPU_ApplySensitivityDirection( void* args_ptr, bool inverse );
 	void* CPU_FFTDirection( void* args_ptr, bool reverse );
 #endif
 
@@ -44,7 +43,7 @@ void* CPU_FFTDirection( void* args_ptr, bool reverse )
 #endif
 
 #ifdef TCR_KERNEL_CUDA
-__global__ void CUDA_ApplyFidelityDifference( float* estimate, float* gradient, float* meas_data, int num_pixels, int thread_load )
+__global__ void CUDA_ApplyFidelityDifference( float* estimate, float* gradient, float* meas_data, int image_size, int num_pixels, int thread_load )
 {
 	int pixel_start = ( blockIdx.x*blockDim.x + threadIdx.x ) * thread_load;
 #else
@@ -54,6 +53,7 @@ void* CPU_ApplyFidelityDifference( void* args_ptr )
 	float* gradient = args->gradient;
 	float* estimate = args->estimate;
 	float* meas_data = args->meas_data;
+	int image_size = args->image_size;
 	int pixel_start = args->pixel_start;
 	int thread_load = args->pixel_length;
 	int num_pixels = args->num_pixels;
@@ -67,8 +67,8 @@ void* CPU_ApplyFidelityDifference( void* args_ptr )
 	{
 		if( fabs( meas_data[2*i] ) > 1e-20 || fabs( meas_data[2*i+1] ) > 1e-20 )
 		{
-			gradient[2*i] = estimate[2*i] - meas_data[2*i];
-			gradient[2*i+1] = estimate[2*i+1] - meas_data[2*i+1];
+			gradient[2*i] = ( gradient[2*i] - meas_data[2*i] ) / image_size;
+			gradient[2*i+1] = ( gradient[2*i+1] - meas_data[2*i+1] ) / image_size;
 		}
 		else
 		{
@@ -103,7 +103,10 @@ void* CPU_CalcTemporalGradient( void* args_ptr )
 
 	for( int i = pixel_start; i < last_pixel; i++ )
 	{
-		//int pixel2d = i % image_size;
+		// fft scale
+		//gradient[2*i] /= image_size;
+		//gradient[2*i+1] /= image_size;
+
 		int image_num = i / image_size;
 		int phase = image_num % num_phases;
 		int next_phase = (phase+1) % num_phases;
@@ -129,6 +132,7 @@ void* CPU_CalcTemporalGradient( void* args_ptr )
 
 		gradient[2*i] -= ( -grad1_real + grad2_real ) * beta;
 		gradient[2*i+1] -= ( -grad1_imag + grad2_imag ) * beta;
+
 
 		//gradient[2*i] += (2*estimate[2*i] - estimate[2*idx_next_phase] - estimate[2*idx_prev_phase]) * beta;
 		//gradient[2*i+1] += (2*estimate[2*i+1] - estimate[2*idx_next_phase+1] - estimate[2*idx_prev_phase+1]) * beta;
@@ -160,7 +164,35 @@ void* CPU_UpdateEstimate( void* args_ptr )
 		estimate[2*i] -= step_size * gradient[2*i];
 		estimate[2*i+1] -= step_size * gradient[2*i+1];
 
+		//! DEBUG
 		//estimate[2*i] = gradient[2*i];
 		//estimate[2*i+1] = gradient[2*i+1];
+	}
+}
+
+#ifdef TCR_KERNEL_CUDA
+__global__ void CUDA_LoadGradient( float* gradient, float* estimate, int num_pixels, int thread_load )
+{
+	int pixel_start = ( blockIdx.x*blockDim.x + threadIdx.x ) * thread_load;
+#else
+void* CPU_LoadGradient( void* args_ptr )
+{
+	KernelArgs* args = (KernelArgs*) args_ptr;
+	float* gradient = args->gradient;
+	float* estimate = args->estimate;
+	float step_size = args->step_size;
+	int pixel_start = args->pixel_start;
+	int thread_load = args->pixel_length;
+	int num_pixels = args->num_pixels;
+
+#endif
+	int last_pixel = pixel_start + thread_load;
+	if( last_pixel > num_pixels)
+		last_pixel = num_pixels;
+
+	for( int i = pixel_start; i < last_pixel; i++ )
+	{
+		gradient[2*i] = estimate[2*i];
+		gradient[2*i+1] = estimate[2*i+1];
 	}
 }
