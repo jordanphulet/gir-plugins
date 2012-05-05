@@ -28,7 +28,9 @@ void TCRIterator::Iterate( int iterations )
 		ApplyFidelityDifference();
 
 		// temporal gradient term
+		IFFT();
 		CalcTemporalGradient();
+		FFT();
 		
 		// update estimate
 		UpdateEstimate();

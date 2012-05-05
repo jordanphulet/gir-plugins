@@ -162,7 +162,7 @@ bool GetDataSubset( MRIData& data_in, MRIData& data_out, int channel, int slice 
 	{
 		float* full_index = data_in.GetDataIndex( 0, line, channel, set, phase, slice, echo, repetition, segment, partition, average );
 		float* sub_index = data_out.GetDataIndex( 0, line, 0, set, phase, 0, echo, repetition, segment, partition, average );
-		memcpy( full_index, sub_index, copy_size );
+		memcpy( sub_index, full_index, copy_size );
 	}
 
 	return true;
