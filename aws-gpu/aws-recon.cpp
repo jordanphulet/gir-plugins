@@ -135,42 +135,44 @@ class ReconConfig
 	}
 };
 
-bool CopySubData( MRIData& data_in, MRIData& data_out, int channel, int slice, bool full_to_sub )
+bool CopySubData( MRIData& full_data, MRIData& sub_data, int channel, int slice, bool full_to_sub )
 {
-	if( data_in.Size().Channel <= channel || data_in.Size().Slice <= slice )
+	if( full_data.Size().Channel <= channel || full_data.Size().Slice <= slice )
 	{
 		cerr << "GetDataSubset -> invalid channel or slice!" << endl;
 		return false;
 	}
 
-	// resize data_out
-	MRIDimensions sub_dims = data_in.Size();
-	sub_dims.Channel = 1;
-	sub_dims.Slice = 1;
-	data_out = MRIData( sub_dims, data_in.IsComplex() );
+	// resize sub_data (only if we are copying from full data)
+	if( full_to_sub )
+	{
+		MRIDimensions sub_dims = full_data.Size();
+		sub_dims.Channel = 1;
+		sub_dims.Slice = 1;
+		sub_data = MRIData( sub_dims, full_data.IsComplex() );
+	}
 
 	// copy data
-	int copy_size = data_in.Size().Column * sizeof( float );
-	if( data_in.IsComplex() )
+	int copy_size = full_data.Size().Column * sizeof( float );
+	if( full_data.IsComplex() )
 		copy_size *= 2;
 
-	for( int line = 0;	line < sub_dims.Line; line++ )
-	for( int set = 0; set < sub_dims.Set; set++ )
-	for( int phase = 0; phase < sub_dims.Phase; phase++ )
-	for( int echo = 0; echo < sub_dims.Echo; echo++ )
-	for( int repetition = 0; repetition < sub_dims.Repetition; repetition++ )
-	for( int segment = 0; segment < sub_dims.Segment; segment++ )
-	for( int partition = 0; partition < sub_dims.Partition; partition++ )
-	for( int average = 0; average < sub_dims.Average; average++ )
+	for( int line = 0;	line < full_data.Size().Line; line++ )
+	for( int set = 0; set < full_data.Size().Set; set++ )
+	for( int phase = 0; phase < full_data.Size().Phase; phase++ )
+	for( int echo = 0; echo < full_data.Size().Echo; echo++ )
+	for( int repetition = 0; repetition < full_data.Size().Repetition; repetition++ )
+	for( int segment = 0; segment < full_data.Size().Segment; segment++ )
+	for( int partition = 0; partition < full_data.Size().Partition; partition++ )
+	for( int average = 0; average < full_data.Size().Average; average++ )
 	{
-		float* full_index = data_in.GetDataIndex( 0, line, channel, set, phase, slice, echo, repetition, segment, partition, average );
-		float* sub_index = data_out.GetDataIndex( 0, line, 0, set, phase, 0, echo, repetition, segment, partition, average );
+		float* full_index = full_data.GetDataIndex( 0, line, channel, set, phase, slice, echo, repetition, segment, partition, average );
+		float* sub_index = sub_data.GetDataIndex( 0, line, 0, set, phase, 0, echo, repetition, segment, partition, average );
 		if( full_to_sub )
 			memcpy( sub_index, full_index, copy_size );
 		else
 			memcpy( full_index, sub_index, copy_size );
 	}
-
 	return true;
 }
 
@@ -196,16 +198,8 @@ int main( int argc, char** argv )
 	
 	// load the data
 	string full_input_path = config.host_io_dir + config.input_file;
-	FileCommunicator communicator;
-	if( !communicator.OpenInput( full_input_path.c_str() ) )
-	{
-		cerr << "Unable to load input file: '" << full_input_path << "!'" << endl;
-		exit( EXIT_FAILURE );
-	}
-	MRIReconRequest request;
-	MRIData mri_data;
-	communicator.ReceiveReconRequest( request );
-	communicator.ReceiveData( mri_data );
+	MRIData input_data;
+	FileCommunicator::Read( input_data, full_input_path );
 
 	// generate path prefix
 	stringstream path_prefix_stream;
@@ -213,7 +207,7 @@ int main( int argc, char** argv )
 
 	// fork to execute on all machines
 	int num_machines = config.machine_descs.size();
-	int num_subsets = mri_data.Size().Channel * mri_data.Size().Slice;
+	int num_subsets = input_data.Size().Channel * input_data.Size().Slice;
 	int subsets_per_machine = (int)ceil( (float)num_subsets / num_machines );
 	cout << "num_machines: " << num_machines << endl;
 	cout << "num_subsets: " << num_subsets << endl;
@@ -245,10 +239,10 @@ int main( int argc, char** argv )
 					break;
 
 				// split the data
-				int sub_channel = real_subset % mri_data.Size().Channel;
-				int sub_slice = real_subset / mri_data.Size().Channel;
+				int sub_channel = real_subset % input_data.Size().Channel;
+				int sub_slice = real_subset / input_data.Size().Channel;
 				MRIData sub_data;
-				if( !CopySubData( mri_data, sub_data, sub_channel, sub_slice, true ) )
+				if( !CopySubData( input_data, sub_data, sub_channel, sub_slice, true ) )
 				{
 					cerr << "GetDataSubset failed!\n" << endl;
 					return EXIT_FAILURE;
@@ -260,12 +254,7 @@ int main( int argc, char** argv )
 				stringstream sub_data_file;
 				sub_data_file << config.input_file << ".ch_" << sub_channel << ".sl_" << sub_slice;
 				string sub_data_path = config.host_io_dir + sub_data_file.str();
-				FileCommunicator out_communicator;
-				out_communicator.OpenOutput( sub_data_path.c_str() );
-				MRIReconRequest request;
-				request.pipeline = "nothing";
-				out_communicator.SendReconRequest( request );
-				out_communicator.SendData( sub_data );
+				FileCommunicator::Write( sub_data, sub_data_path );
 	
 				// create tcr command
 				stringstream tcr_command_stream;
@@ -295,8 +284,8 @@ int main( int argc, char** argv )
 				payload_stream << "scp -P " << this_desc.port << " " << this_desc.address << ":" << exec_path << "/" << sub_data_file.str() << ".out " <<  config.host_io_dir << ";" << endl;
 	
 				// execute payload
-				cout << "payload: " << endl << "----------" << endl << payload_stream.str() << endl;
-				//system( payload_stream.str().c_str() );
+				//cout << "payload: " << endl << "----------" << endl << payload_stream.str() << endl;
+				system( payload_stream.str().c_str() );
 			}
 
 			// forked child is done
@@ -317,9 +306,9 @@ int main( int argc, char** argv )
 	}
 
 	// gather the data
-	MRIDimensions output_dims = mri_data.Size();
+	MRIDimensions output_dims = input_data.Size();
 	output_dims.Line = output_dims.Column;
-	MRIData output_data( output_dims, mri_data.IsComplex() );
+	MRIData output_data( output_dims, input_data.IsComplex() );
 	for( int i = 0; i < num_machines; i++ )
 	{
 		for( int subset = 0; subset < subsets_per_machine; subset++ )
@@ -328,23 +317,15 @@ int main( int argc, char** argv )
 			int real_subset = subset + (i * subsets_per_machine);
 			if( real_subset >= num_subsets )
 				break;
-			int sub_channel = real_subset % mri_data.Size().Channel;
-			int sub_slice = real_subset / mri_data.Size().Channel;
+			int sub_channel = real_subset % input_data.Size().Channel;
+			int sub_slice = real_subset / input_data.Size().Channel;
 
 			// load the sub data
 			stringstream sub_data_file;
 			sub_data_file << config.host_io_dir << config.input_file << ".ch_" << sub_channel << ".sl_" << sub_slice << ".out";
 			cout << "loading: " << sub_data_file.str() << endl;
-			FileCommunicator sub_communicator;
-			if( !sub_communicator.OpenInput( sub_data_file.str().c_str() ) )
-			{
-				cerr << "Unable to load sub input file: '" << sub_data_file.str() << "!'" << endl;
-				exit( EXIT_FAILURE );
-			}
-			MRIReconRequest sub_request;
 			MRIData sub_data;
-			sub_communicator.ReceiveReconRequest( request );
-			sub_communicator.ReceiveData( sub_data );
+			FileCommunicator::Read( sub_data, sub_data_file.str() );
 
 			// copy into putput
 			if( !CopySubData( output_data, sub_data, sub_channel, sub_slice, false ) )
@@ -355,13 +336,8 @@ int main( int argc, char** argv )
 		}
 	}
 
-	FileCommunicator final_out_communicator;
-	string final_output_path = config.host_io_dir + config.output_file;
-	final_out_communicator.OpenOutput( final_output_path.c_str() );
-	MRIReconRequest final_request;
-	final_request.pipeline = "nothing";
-	final_out_communicator.SendReconRequest( final_request );
-	final_out_communicator.SendData( output_data );
+	// write final output
+	FileCommunicator::Write( output_data, config.host_io_dir + config.output_file );
 
 	time_t time_all_done = time( 0 );
 
