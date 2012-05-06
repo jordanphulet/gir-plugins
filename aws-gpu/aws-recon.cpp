@@ -135,7 +135,7 @@ class ReconConfig
 	}
 };
 
-bool GetDataSubset( MRIData& data_in, MRIData& data_out, int channel, int slice )
+bool CopySubData( MRIData& data_in, MRIData& data_out, int channel, int slice, bool full_to_sub )
 {
 	if( data_in.Size().Channel <= channel || data_in.Size().Slice <= slice )
 	{
@@ -165,7 +165,10 @@ bool GetDataSubset( MRIData& data_in, MRIData& data_out, int channel, int slice 
 	{
 		float* full_index = data_in.GetDataIndex( 0, line, channel, set, phase, slice, echo, repetition, segment, partition, average );
 		float* sub_index = data_out.GetDataIndex( 0, line, 0, set, phase, 0, echo, repetition, segment, partition, average );
-		memcpy( sub_index, full_index, copy_size );
+		if( full_to_sub )
+			memcpy( sub_index, full_index, copy_size );
+		else
+			memcpy( full_index, sub_index, copy_size );
 	}
 
 	return true;
@@ -245,7 +248,7 @@ int main( int argc, char** argv )
 				int sub_channel = real_subset % mri_data.Size().Channel;
 				int sub_slice = real_subset / mri_data.Size().Channel;
 				MRIData sub_data;
-				if( !GetDataSubset( mri_data, sub_data, sub_channel, sub_slice ) )
+				if( !CopySubData( mri_data, sub_data, sub_channel, sub_slice, true ) )
 				{
 					cerr << "GetDataSubset failed!\n" << endl;
 					return EXIT_FAILURE;
@@ -280,14 +283,20 @@ int main( int argc, char** argv )
 	
 				// generate payload
 				stringstream payload_stream;
+				// make recon directory
 				payload_stream << "ssh -p " << this_desc.port << " " << this_desc.address << " mkdir -p " << exec_path << "/;" << endl;
+				// copy binaries to node
 				payload_stream << "scp -P " << this_desc.port << " aws-bins/* " << this_desc.address << ":" << exec_path << "/;" << endl;
-				payload_stream << "scp -P " << this_desc.port << " " <<  sub_data_path << " "<< this_desc.address << ":" << exec_path << "/;" << endl;
+				// copy data to node
+				payload_stream << "scp -P " << this_desc.port << " " <<  config.host_io_dir << sub_data_file.str() << " "<< this_desc.address << ":" << exec_path << "/;" << endl;
+				// execute recon
 				payload_stream << "ssh -p " << this_desc.port << " " << this_desc.address << " \"(cd " << exec_path << "/; " << tcr_command_stream.str() << "&> atomic-tcr.out)\";" << endl;
-				cout << "payload: " << endl << "----------" << endl << payload_stream.str() << endl;
+				// copy reconstructed data to node
+				payload_stream << "scp -P " << this_desc.port << " " << this_desc.address << ":" << exec_path << "/" << sub_data_file.str() << ".out " <<  config.host_io_dir << ";" << endl;
 	
 				// execute payload
-				system( payload_stream.str().c_str() );
+				cout << "payload: " << endl << "----------" << endl << payload_stream.str() << endl;
+				//system( payload_stream.str().c_str() );
 			}
 
 			// forked child is done
@@ -306,6 +315,53 @@ int main( int argc, char** argv )
         	return EXIT_FAILURE;
 		}
 	}
+
+	// gather the data
+	MRIDimensions output_dims = mri_data.Size();
+	output_dims.Line = output_dims.Column;
+	MRIData output_data( output_dims, mri_data.IsComplex() );
+	for( int i = 0; i < num_machines; i++ )
+	{
+		for( int subset = 0; subset < subsets_per_machine; subset++ )
+		{
+			// get indices
+			int real_subset = subset + (i * subsets_per_machine);
+			if( real_subset >= num_subsets )
+				break;
+			int sub_channel = real_subset % mri_data.Size().Channel;
+			int sub_slice = real_subset / mri_data.Size().Channel;
+
+			// load the sub data
+			stringstream sub_data_file;
+			sub_data_file << config.host_io_dir << config.input_file << ".ch_" << sub_channel << ".sl_" << sub_slice << ".out";
+			cout << "loading: " << sub_data_file.str() << endl;
+			FileCommunicator sub_communicator;
+			if( !sub_communicator.OpenInput( sub_data_file.str().c_str() ) )
+			{
+				cerr << "Unable to load sub input file: '" << sub_data_file.str() << "!'" << endl;
+				exit( EXIT_FAILURE );
+			}
+			MRIReconRequest sub_request;
+			MRIData sub_data;
+			sub_communicator.ReceiveReconRequest( request );
+			sub_communicator.ReceiveData( sub_data );
+
+			// copy into putput
+			if( !CopySubData( output_data, sub_data, sub_channel, sub_slice, false ) )
+			{
+				cerr << "CopySubData failed for output_data!\n" << endl;
+				return EXIT_FAILURE;
+			}
+		}
+	}
+
+	FileCommunicator final_out_communicator;
+	string final_output_path = config.host_io_dir + config.output_file;
+	final_out_communicator.OpenOutput( final_output_path.c_str() );
+	MRIReconRequest final_request;
+	final_request.pipeline = "nothing";
+	final_out_communicator.SendReconRequest( final_request );
+	final_out_communicator.SendData( output_data );
 
 	time_t time_all_done = time( 0 );
 
