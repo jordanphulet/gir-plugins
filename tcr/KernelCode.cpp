@@ -67,8 +67,13 @@ void* CPU_ApplyFidelityDifference( void* args_ptr )
 	{
 		if( fabs( meas_data[2*i] ) > 1e-20 || fabs( meas_data[2*i+1] ) > 1e-20 )
 		{
+#ifdef TCR_KERNEL_CUDA
 			gradient[2*i] = ( gradient[2*i] - meas_data[2*i] ) / image_size;
 			gradient[2*i+1] = ( gradient[2*i+1] - meas_data[2*i+1] ) / image_size;
+#else
+			gradient[2*i] = ( gradient[2*i] - meas_data[2*i] );
+			gradient[2*i+1] = ( gradient[2*i+1] - meas_data[2*i+1] );
+#endif
 		}
 		else
 		{
