@@ -7,6 +7,7 @@
 #include <vector>
 #include <math.h>
 #include <sys/wait.h>
+#include <GIRLogger.h>
 #include <FileCommunicator.h>
 #include <MRIDataComm.h>
 #include <MRIData.h>
@@ -19,11 +20,13 @@ class MachineDesc
 	string address;
 	int port;
 	int cuda_device;
+	string authentication;
 
-	MachineDesc( string new_address, int new_port, int new_cuda_device ):
+	MachineDesc( string new_address, int new_port, int new_cuda_device, string new_authentication ):
 		address( new_address ),
 		port( new_port ),
-		cuda_device( new_cuda_device )
+		cuda_device( new_cuda_device ),
+		authentication( new_authentication )
 	{
 	}
 };
@@ -77,6 +80,10 @@ class ReconConfig
 			stringstream line_stream( line_buffer );
 			line_stream >> key;
 
+			// commented line
+			if( key.length() > 0 && key[0] == '#' )
+				continue;
+
 			if( key.compare( "alpha" ) == 0 )
 				line_stream >> alpha;
 			else if( key.compare( "beta" ) == 0 )
@@ -105,8 +112,9 @@ class ReconConfig
 				string address;
 				int port;
 				int cuda_device;
-				line_stream >> address >> port >> cuda_device;
-				MachineDesc machine_desc( address, port, cuda_device );
+				string authentication;
+				line_stream >> address >> port >> cuda_device >> authentication;
+				MachineDesc machine_desc( address, port, cuda_device, authentication );
 				machine_descs.push_back( machine_desc );
 			}
 			else if( key.compare( "" ) != 0 )
@@ -131,7 +139,12 @@ class ReconConfig
 		cout << "output_file: " << output_file << endl;
 		cout << "machines:\t" << endl;
 		for( int i = 0; i < machine_descs.size(); i++ )
-			cout << "\t" << machine_descs[i].address << ":" << machine_descs[i].port << ", GPU: " << machine_descs[i].cuda_device << endl;
+		{
+			cout << "\t" << machine_descs[i].address << ":" << machine_descs[i].port << ", GPU: " << machine_descs[i].cuda_device;
+			if( machine_descs[i].authentication.length() > 0 )
+				cout << ", authentication: " << machine_descs[i].authentication;
+			cout << endl;
+		}
 	}
 };
 
@@ -176,9 +189,86 @@ bool CopySubData( MRIData& full_data, MRIData& sub_data, int channel, int slice,
 	return true;
 }
 
+bool NodeRecon( int node_num, MachineDesc& desc, ReconConfig& config, string exec_path, MRIData& input_data )
+{
+	string auth_string = "";
+	if( desc.authentication.length() > 0 )
+		auth_string = "-i " + desc.authentication + " ";
+
+	// make recon directory and copy over binaries
+	stringstream prime_stream;
+	prime_stream << "ssh " << auth_string << "-p " << desc.port << " " << desc.address << " mkdir -p " << exec_path << "/;" << endl;
+	prime_stream << "scp " << auth_string << "-P " << desc.port << " aws-bins/* " << desc.address << ":" << exec_path << "/;" << endl;
+	cout << "priming:" << endl << prime_stream.str() << endl;
+	system( prime_stream.str().c_str() );
+
+	int num_machines = config.machine_descs.size();
+	int num_subsets = input_data.Size().Channel * input_data.Size().Slice;
+	int subsets_per_machine = (int)ceil( (float)num_subsets / num_machines );
+
+	for( int subset = 0; subset < subsets_per_machine; subset++ )
+	{
+		int real_subset = subset + (node_num * subsets_per_machine);
+		if( real_subset >= num_subsets )
+			break;
+
+		// split the data
+		int sub_channel = real_subset % input_data.Size().Channel;
+		int sub_slice = real_subset / input_data.Size().Channel;
+		MRIData sub_data;
+		if( !CopySubData( input_data, sub_data, sub_channel, sub_slice, true ) )
+		{
+			cerr << "GetDataSubset failed!\n" << endl;
+			return false;
+		}
+
+		// write data to disk
+		stringstream sub_data_file;
+		sub_data_file << config.input_file << ".ch_" << sub_channel << ".sl_" << sub_slice;
+		string sub_data_path = config.host_io_dir + sub_data_file.str();
+		FileCommunicator::Write( sub_data, sub_data_path );
+
+		// copy data to node
+		stringstream copy_stream;
+		copy_stream << "scp " << auth_string << "-P " << desc.port << " " <<  config.host_io_dir << sub_data_file.str() << " "<< desc.address << ":" << exec_path << "/;" << endl;
+		cout << "copying:" << endl << copy_stream.str() << endl;
+		system( copy_stream.str().c_str() );
+	
+		// create tcr command
+		stringstream tcr_command_stream;
+		tcr_command_stream << "export LD_LIBRARY_PATH=.:$LD_LIBRARY_PATH; ";
+		tcr_command_stream << "./atomic-tcr ";
+		tcr_command_stream << sub_data_file.str() << " ";
+		tcr_command_stream << sub_data_file.str() + ".out" << " ";
+		tcr_command_stream << config.alpha << " ";
+		tcr_command_stream << config.beta << " ";
+		tcr_command_stream << config.beta_sq << " ";
+		tcr_command_stream << config.step_size << " ";
+		tcr_command_stream << config.iterations << " ";
+		tcr_command_stream << config.use_gpu << " ";
+		tcr_command_stream << desc.cuda_device << " ";
+		tcr_command_stream << config.cpu_threads << " ";
+
+		// execute
+		stringstream exec_stream;
+		exec_stream << "ssh " << auth_string << "-p " << desc.port << " " << desc.address << " \"(cd " << exec_path << "/; " << tcr_command_stream.str() << "&> atomic-tcr.out)\";" << endl;
+		cout << "executing:" << endl << exec_stream.str() << endl;
+		system( exec_stream.str().c_str() );
+
+		// copy reconstructed data to host
+		stringstream recopy_stream;
+		recopy_stream << "scp " << auth_string << "-P " << desc.port << " " << desc.address << ":" << exec_path << "/" << sub_data_file.str() << ".out " <<  config.host_io_dir << ";" << endl;
+		cout << "recopying:" << endl << recopy_stream.str() << endl;
+		system( recopy_stream.str().c_str() );
+	}
+	return true;
+}
+
 int main( int argc, char** argv )
 {
 	time_t time_begin = time( 0 );
+
+	GIRLogger::Instance()->LogToFile( "gir_log.out" );
 
 	// check args
 	if( argc != 2 )
@@ -226,70 +316,12 @@ int main( int argc, char** argv )
 		// child
 		else
 		{
-			MachineDesc this_desc = config.machine_descs[i];
-			// get path prefix
-			path_prefix_stream << "-" << i;
-			string exec_path = config.node_io_dir + path_prefix_stream.str();
-			cout << "executing on: " << this_desc.address << ":" << this_desc.port << ", GPU: " << this_desc.cuda_device << ", path: " << exec_path << endl;
-			
-			for( int subset = 0; subset < subsets_per_machine; subset++ )
-			{
-				int real_subset = subset + (i * subsets_per_machine);
-				if( real_subset >= num_subsets )
-					break;
-
-				// split the data
-				int sub_channel = real_subset % input_data.Size().Channel;
-				int sub_slice = real_subset / input_data.Size().Channel;
-				MRIData sub_data;
-				if( !CopySubData( input_data, sub_data, sub_channel, sub_slice, true ) )
-				{
-					cerr << "GetDataSubset failed!\n" << endl;
-					return EXIT_FAILURE;
-				}
-
-				cout << "executing subset " << real_subset << " (" << sub_channel << ", " << sub_slice << "): " << subset << endl;
-
-				// write data to disk
-				stringstream sub_data_file;
-				sub_data_file << config.input_file << ".ch_" << sub_channel << ".sl_" << sub_slice;
-				string sub_data_path = config.host_io_dir + sub_data_file.str();
-				FileCommunicator::Write( sub_data, sub_data_path );
-	
-				// create tcr command
-				stringstream tcr_command_stream;
-				tcr_command_stream << "./atomic-tcr ";
-				tcr_command_stream << sub_data_file.str() << " ";
-				tcr_command_stream << sub_data_file.str() + ".out" << " ";
-				tcr_command_stream << config.alpha << " ";
-				tcr_command_stream << config.beta << " ";
-				tcr_command_stream << config.beta_sq << " ";
-				tcr_command_stream << config.step_size << " ";
-				tcr_command_stream << config.iterations << " ";
-				tcr_command_stream << config.use_gpu << " ";
-				tcr_command_stream << this_desc.cuda_device << " ";
-				tcr_command_stream << config.cpu_threads << " ";
-	
-				// generate payload
-				stringstream payload_stream;
-				// make recon directory
-				payload_stream << "ssh -p " << this_desc.port << " " << this_desc.address << " mkdir -p " << exec_path << "/;" << endl;
-				// copy binaries to node
-				payload_stream << "scp -P " << this_desc.port << " aws-bins/* " << this_desc.address << ":" << exec_path << "/;" << endl;
-				// copy data to node
-				payload_stream << "scp -P " << this_desc.port << " " <<  config.host_io_dir << sub_data_file.str() << " "<< this_desc.address << ":" << exec_path << "/;" << endl;
-				// execute recon
-				payload_stream << "ssh -p " << this_desc.port << " " << this_desc.address << " \"(cd " << exec_path << "/; " << tcr_command_stream.str() << "&> atomic-tcr.out)\";" << endl;
-				// copy reconstructed data to node
-				payload_stream << "scp -P " << this_desc.port << " " << this_desc.address << ":" << exec_path << "/" << sub_data_file.str() << ".out " <<  config.host_io_dir << ";" << endl;
-	
-				// execute payload
-				//cout << "payload: " << endl << "----------" << endl << payload_stream.str() << endl;
-				system( payload_stream.str().c_str() );
-			}
-
-			// forked child is done
-			return EXIT_SUCCESS;
+			stringstream exec_path;
+			exec_path << config.node_io_dir << path_prefix_stream.str() << "-" << config.machine_descs[i].cuda_device;
+			if( NodeRecon( i, config.machine_descs[i], config, exec_path.str(), input_data ) )
+				return EXIT_SUCCESS;
+			else
+				return EXIT_FAILURE;
 		}
 	}
 
@@ -325,7 +357,11 @@ int main( int argc, char** argv )
 			sub_data_file << config.host_io_dir << config.input_file << ".ch_" << sub_channel << ".sl_" << sub_slice << ".out";
 			cout << "loading: " << sub_data_file.str() << endl;
 			MRIData sub_data;
-			FileCommunicator::Read( sub_data, sub_data_file.str() );
+			if( !FileCommunicator::Read( sub_data, sub_data_file.str() ) )
+			{
+				cerr << "Unable to read sub data: " << sub_data_file.str() << "!" << endl;
+				return EXIT_FAILURE;
+			}
 
 			// copy into putput
 			if( !CopySubData( output_data, sub_data, sub_channel, sub_slice, false ) )
