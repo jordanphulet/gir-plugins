@@ -101,9 +101,14 @@ void Execute( const char* input_file, const char* output_file, float alpha, floa
 	// reconstruct
 	Reconstruct( data, alpha, beta, beta_squared, step_size, iterations, use_gpu, cuda_device, cpu_threads );
 
+	// take magnitude and remove os to reduce size
+	MRIData final_data;
+	data.GetMagnitude( final_data );
+	FilterTool::RemoveOS( final_data );
+
 	// write output
 	GIRLogger::LogInfo( "Writing output...\n" );
-	communicator.SendData( data );
+	communicator.SendData( final_data );
 	GIRLogger::LogInfo( "Done.\n" );
 }
 

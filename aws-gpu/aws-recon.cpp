@@ -3,7 +3,6 @@
 #include <fstream>
 #include <sstream>
 #include <cstring>
-#include <ctime>
 #include <vector>
 #include <math.h>
 #include <sys/wait.h>
@@ -11,6 +10,7 @@
 #include <FileCommunicator.h>
 #include <MRIDataComm.h>
 #include <MRIData.h>
+#include <JTimer.h>
 
 using namespace std;
 
@@ -198,7 +198,7 @@ bool NodeRecon( int node_num, MachineDesc& desc, ReconConfig& config, string exe
 	// make recon directory and copy over binaries
 	stringstream prime_stream;
 	prime_stream << "ssh " << auth_string << "-p " << desc.port << " " << desc.address << " mkdir -p " << exec_path << "/;" << endl;
-	prime_stream << "scp " << auth_string << "-P " << desc.port << " aws-bins/* " << desc.address << ":" << exec_path << "/;" << endl;
+	prime_stream << "scp -C " << auth_string << "-P " << desc.port << " aws-bins/* " << desc.address << ":" << exec_path << "/;" << endl;
 	cout << "priming:" << endl << prime_stream.str() << endl;
 	system( prime_stream.str().c_str() );
 
@@ -230,8 +230,8 @@ bool NodeRecon( int node_num, MachineDesc& desc, ReconConfig& config, string exe
 
 		// copy data to node
 		stringstream copy_stream;
-		copy_stream << "scp " << auth_string << "-P " << desc.port << " " <<  config.host_io_dir << sub_data_file.str() << " "<< desc.address << ":" << exec_path << "/;" << endl;
-		cout << "copying:" << endl << copy_stream.str() << endl;
+		copy_stream << "scp -C " << auth_string << "-P " << desc.port << " " <<  config.host_io_dir << sub_data_file.str() << " "<< desc.address << ":" << exec_path << "/;" << endl;
+		//cout << "copying:" << endl << copy_stream.str() << endl;
 		system( copy_stream.str().c_str() );
 	
 		// create tcr command
@@ -252,13 +252,13 @@ bool NodeRecon( int node_num, MachineDesc& desc, ReconConfig& config, string exe
 		// execute
 		stringstream exec_stream;
 		exec_stream << "ssh " << auth_string << "-p " << desc.port << " " << desc.address << " \"(cd " << exec_path << "/; " << tcr_command_stream.str() << "&> atomic-tcr.out)\";" << endl;
-		cout << "executing:" << endl << exec_stream.str() << endl;
+		//cout << "executing:" << endl << exec_stream.str() << endl;
 		system( exec_stream.str().c_str() );
 
 		// copy reconstructed data to host
 		stringstream recopy_stream;
-		recopy_stream << "scp " << auth_string << "-P " << desc.port << " " << desc.address << ":" << exec_path << "/" << sub_data_file.str() << ".out " <<  config.host_io_dir << ";" << endl;
-		cout << "recopying:" << endl << recopy_stream.str() << endl;
+		recopy_stream << "scp -C " << auth_string << "-P " << desc.port << " " << desc.address << ":" << exec_path << "/" << sub_data_file.str() << ".out " <<  config.host_io_dir << ";" << endl;
+		//cout << "recopying:" << endl << recopy_stream.str() << endl;
 		system( recopy_stream.str().c_str() );
 	}
 	return true;
@@ -266,7 +266,8 @@ bool NodeRecon( int node_num, MachineDesc& desc, ReconConfig& config, string exe
 
 int main( int argc, char** argv )
 {
-	time_t time_begin = time( 0 );
+	
+	JTimer global_timer;
 
 	GIRLogger::Instance()->LogToFile( "gir_log.out" );
 
@@ -304,8 +305,6 @@ int main( int argc, char** argv )
 	cout << "subsets_per_machine: " << subsets_per_machine << endl;
 	vector<pid_t> pids;
 
-	time_t time_init_done = time( 0 );
-
 	for( int i = 0; i < num_machines; i++ )
 	{
 		// child
@@ -322,6 +321,7 @@ int main( int argc, char** argv )
 				return EXIT_SUCCESS;
 			else
 				return EXIT_FAILURE;
+			return EXIT_SUCCESS;
 		}
 	}
 
@@ -339,8 +339,12 @@ int main( int argc, char** argv )
 
 	// gather the data
 	MRIDimensions output_dims = input_data.Size();
+
+	//!HACK - this is assuming that OS will be removed and magnitude will be take in reconstruction
+	output_dims.Column = (int)floor( output_dims.Column / 2 );
 	output_dims.Line = output_dims.Column;
-	MRIData output_data( output_dims, input_data.IsComplex() );
+	MRIData output_data( output_dims, false );
+
 	for( int i = 0; i < num_machines; i++ )
 	{
 		for( int subset = 0; subset < subsets_per_machine; subset++ )
@@ -375,16 +379,10 @@ int main( int argc, char** argv )
 	// write final output
 	FileCommunicator::Write( output_data, config.host_io_dir + config.output_file );
 
-	time_t time_all_done = time( 0 );
-
-	double init_time = time_init_done - time_begin;
-	double recon_time = time_all_done - time_init_done;
-	double total_time = time_all_done - time_begin;
+	float total_time = global_timer.Stop();
 
 	// done
 	cout << "all forks done, exiting..." << endl;
-	cout << "initialzation time: " << init_time << endl;
-	cout << "reconstruction time: " << recon_time << endl;
 	cout << "total time: " << total_time << endl;
 
 	return EXIT_SUCCESS;
