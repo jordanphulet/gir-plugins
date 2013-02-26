@@ -17,12 +17,12 @@
 	#include <TCRIteratorCUDA.h>
 #endif
 
-bool Reconstruct( MRIData& data, float alpha, float beta, float beta_squared, float step_size, int iterations, bool use_gpu, int cuda_device, int cpu_threads )
+bool Reconstruct( MRIData& data, float alpha, float beta, float beta_squared, float step_size, int iterations, bool use_gpu, int cuda_device, int cpu_threads, bool do_grid, int gpu_thread_load )
 {
 	GIRLogger::LogInfo( "reconstructing (%s)...\n", data.Size().ToString().c_str() );
-	int gpu_thread_load = 1;
 	
 	// regrid
+	if( do_grid )
 	{
 		RadialGridder gridder;
 		gridder.repetition_offset = 0;
@@ -46,12 +46,18 @@ bool Reconstruct( MRIData& data, float alpha, float beta, float beta_squared, fl
 	MRIDataTool::TemporallyInterpolateKSpace( data, estimate );
 	FilterTool::FFT2D( estimate, true );
 
+	TCRIterator::TemporalDimension temp_dim;
+	if( data.Size().Repetition > 1 )
+		temp_dim = TCRIterator::TEMP_DIM_REP;
+	else
+		temp_dim = TCRIterator::TEMP_DIM_PHASE;
+
 	// iterate
 	if( use_gpu )
 	{
 #ifndef NO_CUDA
 		GIRLogger::LogInfo( "reconstructing on GPU...\n" );
-		TCRIteratorCUDA iterator( gpu_thread_load, TCRIterator::TEMP_DIM_REP );
+		TCRIteratorCUDA iterator( gpu_thread_load, temp_dim );
 		iterator.cuda_device = cuda_device;
 		iterator.Load( alpha, beta, beta_squared, step_size, data, estimate );
 		iterator.Iterate( iterations );
@@ -64,7 +70,7 @@ bool Reconstruct( MRIData& data, float alpha, float beta, float beta_squared, fl
 	else
 	{
 		GIRLogger::LogInfo( "reconstructing on CPU(s)...\n" );
-		TCRIteratorCPU iterator( cpu_threads, TCRIterator::TEMP_DIM_REP );
+		TCRIteratorCPU iterator( cpu_threads, temp_dim );
 		iterator.Load( alpha, beta, beta_squared, step_size, data, estimate );
 		iterator.Iterate( iterations );
 		iterator.Unload( data );
@@ -76,7 +82,7 @@ bool Reconstruct( MRIData& data, float alpha, float beta, float beta_squared, fl
 }
 
 
-void Execute( const char* input_file, const char* output_file, float alpha, float beta, float beta_squared, float step_size, int iterations, bool use_gpu, int cuda_device, int cpu_threads )
+void Execute( const char* input_file, const char* output_file, float alpha, float beta, float beta_squared, float step_size, int iterations, bool use_gpu, int cuda_device, int cpu_threads, bool do_grid, int gpu_thread_load )
 {
 	printf( "parameters:\n\talpha %f, beta %f, step_size %f, iterations %d, use_gpu %d, cuda_device: %d, cpu_threads: %d\n", alpha, beta, step_size, iterations, use_gpu, cuda_device, cpu_threads );
 		
@@ -99,12 +105,19 @@ void Execute( const char* input_file, const char* output_file, float alpha, floa
 	communicator.ReceiveData( data );
 
 	// reconstruct
-	Reconstruct( data, alpha, beta, beta_squared, step_size, iterations, use_gpu, cuda_device, cpu_threads );
+	Reconstruct( data, alpha, beta, beta_squared, step_size, iterations, use_gpu, cuda_device, cpu_threads, do_grid, gpu_thread_load );
+
+	GIRLogger::LogInfo( "reconstructed...\n" );
 
 	// take magnitude and remove os to reduce size
 	MRIData final_data;
 	data.GetMagnitude( final_data );
+
+	GIRLogger::LogInfo( "magnitude taken...\n" );
+
 	FilterTool::RemoveOS( final_data );
+
+	GIRLogger::LogInfo( "os removed...\n" );
 
 	// write output
 	GIRLogger::LogInfo( "Writing output...\n" );
@@ -115,10 +128,22 @@ void Execute( const char* input_file, const char* output_file, float alpha, floa
 int main( int argc, char** argv )
 {
 	// check args
-	if( argc != 11 )
+	if( argc < 11 || argc > 13 )
 	{
-		fprintf( stderr, "USAGE: atomic-tcr INPUT_FILE OUTPUT_FILE ALPHA BETA BETA_SQUARED STEP_SIZE ITERATIONS USE_GPU CUDA_DEVICE CPU_THREADS\n" );
+		fprintf( stderr, "USAGE: atomic-tcr INPUT_FILE OUTPUT_FILE ALPHA BETA BETA_SQUARED STEP_SIZE ITERATIONS USE_GPU CUDA_DEVICE CPU_THREADS [DO_GRID] [GPU_THREAD_LOAD]\n" );
 		exit( EXIT_FAILURE );
+	}
+
+	bool do_grid = true;
+	if( argc > 11 )
+		do_grid = *argv[11] == '1';
+	
+	int gpu_thread_load = 1;
+	if( argc > 12 )
+	{
+		std::stringstream tl_stream;
+		tl_stream << argv[12];
+		tl_stream >> gpu_thread_load;
 	}
 
 	// read in arguments
@@ -137,7 +162,7 @@ int main( int argc, char** argv )
 	
 	// execute
 	GIRLogger::LogInfo( "starting...\n" );
-	Execute( argv[1], argv[2], alpha, beta, beta_squared, step_size, iterations, use_gpu, cuda_device, cpu_threads );
+	Execute( argv[1], argv[2], alpha, beta, beta_squared, step_size, iterations, use_gpu, cuda_device, cpu_threads, do_grid, gpu_thread_load );
 
 	exit( EXIT_SUCCESS );
 }

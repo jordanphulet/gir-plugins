@@ -41,6 +41,8 @@ class ReconConfig
 	float iterations;
 	bool use_gpu;
 	int cpu_threads;
+	bool do_grid;
+	int gpu_threads;
 	string host_io_dir;
 	string node_io_dir;
 	string input_file;
@@ -55,6 +57,8 @@ class ReconConfig
 		iterations( 100 ),
 		use_gpu( false ),
 		cpu_threads( 1 ),
+		do_grid( true ),
+		gpu_threads( 1 ),
 		host_io_dir( "/DATA" ),
 		node_io_dir( "/DATA" ),
 		input_file( "input.ser" ),
@@ -98,6 +102,10 @@ class ReconConfig
 				line_stream >> use_gpu;
 			else if( key.compare( "cpu_threads" ) == 0 )
 				line_stream >> cpu_threads;
+			else if( key.compare( "do_grid" ) == 0 )
+				line_stream >> do_grid;
+			else if( key.compare( "gpu_threads" ) == 0 )
+				line_stream >> gpu_threads;
 			else if( key.compare( "host_io_dir" ) == 0 )
 				line_stream >> host_io_dir;
 			else if( key.compare( "node_io_dir" ) == 0 )
@@ -133,6 +141,8 @@ class ReconConfig
 		cout << "iterations: " << iterations << endl;
 		cout << "use_gpu: " << use_gpu << endl;
 		cout << "cpu_threads: " << cpu_threads << endl;
+		cout << "do_grid : " << do_grid << endl;
+		cout << "gpu_threads: " << gpu_threads << endl;
 		cout << "host_io_dir: " << host_io_dir << endl;
 		cout << "node_io_dir: " << node_io_dir << endl;
 		cout << "input_file: " << input_file << endl;
@@ -248,6 +258,8 @@ bool NodeRecon( int node_num, MachineDesc& desc, ReconConfig& config, string exe
 		tcr_command_stream << config.use_gpu << " ";
 		tcr_command_stream << desc.cuda_device << " ";
 		tcr_command_stream << config.cpu_threads << " ";
+		tcr_command_stream << config.do_grid << " ";
+		tcr_command_stream << config.gpu_threads << " ";
 
 		// execute
 		stringstream exec_stream;

@@ -134,7 +134,9 @@ void TCRIteratorCUDA::Unload( MRIData& dest_estimate )
 		CheckCUDAError( "Unload -> cudaMemcpy" );
 
 		// unorder
+		GIRLogger::LogDebug( "### unordering\n" );
 		Unorder( dest_estimate, h_estimate );
+		GIRLogger::LogDebug( "### unordered\n" );
 	
 		// free resources on GPU
 		cudaFree( d_meas_data ); d_meas_data = 0;
